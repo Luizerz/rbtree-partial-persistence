@@ -2,302 +2,437 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
+#include <climits>
 
 enum Color { RED, BLACK };
 
 struct Node {
-    int   value;
-    Color color;
-    Node* parent;
-    Node* left;
-    Node* right;
+    int key;
+    Node* origLeft;
+    Node* origRight;
+    Node* origParent;
+    Color origColor;
+    // listas de mods por campo, ordenadas por versao crescente → busca binaria O(log m)
+    std::vector<std::pair<int, Node*>>  leftMods;
+    std::vector<std::pair<int, Node*>>  rightMods;
+    std::vector<std::pair<int, Node*>>  parentMods;
+    std::vector<std::pair<int, Color>>  colorMods;
 };
 
-class RBTree {
+static const int MAX_VERSIONS = 100;
+static const int D = 1000; // limite de mods por no (configuravel)
+
+class PersistentRBTree {
 public:
-    RBTree() {
-        NIL = new Node{0, BLACK, nullptr, nullptr, nullptr};
-        NIL->parent = NIL;
-        NIL->left   = NIL;
-        NIL->right  = NIL;
-        root = NIL;
+    PersistentRBTree() {
+        NIL = new Node();
+        NIL->key = 0;
+        NIL->origLeft = NIL->origRight = NIL->origParent = NIL;
+        NIL->origColor = BLACK;
+        for (int i = 0; i < MAX_VERSIONS; ++i) roots[i] = NIL;
+        curVer = 0;
     }
 
-    ~RBTree() {
-        destroyTree(root);
+    ~PersistentRBTree() {
+        for (auto n : allNodes) delete n;
         delete NIL;
     }
 
     void insert(int value) {
-        Node* z = new Node{value, RED, NIL, NIL, NIL};
+        if (curVer + 1 >= MAX_VERSIONS) return;
+        ++curVer;
+        roots[curVer] = roots[curVer - 1];
+
+        Node* z = makeNode(value);
         Node* y = NIL;
-        Node* x = root;
+        Node* x = roots[curVer];
 
         while (x != NIL) {
             y = x;
-            if (z->value < x->value)
-                x = x->left;
-            else
-                x = x->right;
+            x = (z->key < x->key) ? getLeft(x, curVer) : getRight(x, curVer);
         }
 
-        z->parent = y;
+        setParent(z, y, curVer);
+        if      (y == NIL)           roots[curVer] = z;
+        else if (z->key < y->key)    setLeft(y,  z, curVer);
+        else                          setRight(y, z, curVer);
 
-        if (y == NIL)
-            root = z;
-        else if (z->value < y->value)
-            y->left = z;
-        else
-            y->right = z;
-
-        insertFixUp(z);
+        insertFixUp(z, curVer);
     }
 
     void remove(int value) {
-        Node* z = search(root, value);
-        if (z == NIL)
-            return; // valor nao encontrado, nao altera estrutura
+        if (curVer + 1 >= MAX_VERSIONS) return;
+        ++curVer;
+        roots[curVer] = roots[curVer - 1];
 
-        Node* y = z;
-        Node* x = NIL;
-        Color yOriginalColor = y->color;
+        Node* z = searchVer(roots[curVer], value, curVer);
+        if (z == NIL) return; // nao encontrado: nova versao com mesma raiz
 
-        if (z->left == NIL) {
-            x = z->right;
-            transplant(z, z->right);
-        } else if (z->right == NIL) {
-            x = z->left;
-            transplant(z, z->left);
+        Node* y     = z;
+        Color yOrig = getColor(y, curVer);
+        Node* x     = NIL;
+        Node* xpar  = NIL;
+
+        if (getLeft(z, curVer) == NIL) {
+            x    = getRight(z, curVer);
+            xpar = getParent(z, curVer);
+            transplant(z, x, curVer);
+        } else if (getRight(z, curVer) == NIL) {
+            x    = getLeft(z, curVer);
+            xpar = getParent(z, curVer);
+            transplant(z, x, curVer);
         } else {
-            y = minimum(z->right);
-            yOriginalColor = y->color;
-            x = y->right;
+            y     = minVer(getRight(z, curVer), curVer);
+            yOrig = getColor(y, curVer);
+            x     = getRight(y, curVer);
 
-            if (y->parent == z) {
-                x->parent = y;
+            if (getParent(y, curVer) == z) {
+                xpar = y;
             } else {
-                transplant(y, y->right);
-                y->right = z->right;
-                y->right->parent = y;
+                xpar = getParent(y, curVer);
+                transplant(y, x, curVer);
+                setRight(y, getRight(z, curVer), curVer);
+                setParent(getRight(y, curVer), y, curVer);
             }
-
-            transplant(z, y);
-            y->left = z->left;
-            y->left->parent = y;
-            y->color = z->color;
+            transplant(z, y, curVer);
+            setLeft(y,  getLeft(z, curVer), curVer);
+            setParent(getLeft(y, curVer), y, curVer);
+            setColor(y, getColor(z, curVer), curVer);
         }
 
-        delete z;
-
-        if (yOriginalColor == BLACK)
-            deleteFixUp(x);
+        if (yOrig == BLACK)
+            deleteFixUp(x, xpar, curVer);
     }
 
-    void printInOrder(std::ostream& fileOut) const {
+    void printVersion(int v, std::ostream& fileOut) {
+        int tv = clamp(v);
         std::ostringstream buf;
-        inOrderHelper(root, 0, buf);
+        buf << "IMP " << v << "\n";
+        inorder(roots[tv], 0, tv, buf);
         buf << ";";
-        std::string result = buf.str();
-        fileOut << result << "\n";
-        std::cout  << result << "\n";
+        emit(buf.str(), fileOut);
     }
+
+    void successor(int x, int v, std::ostream& fileOut) {
+        int tv   = clamp(v);
+        int best = INT_MAX;
+        succHelper(roots[tv], x, tv, best);
+        std::ostringstream buf;
+        buf << "SUC " << x << " " << v << " ";
+        if (best == INT_MAX) buf << "infinito";
+        else                 buf << best;
+        emit(buf.str(), fileOut);
+    }
+
+    int currentVersion() const { return curVer; }
 
 private:
-    Node* root;
     Node* NIL;
+    Node* roots[MAX_VERSIONS];
+    int   curVer;
+    std::vector<Node*> allNodes;
 
-    Node* search(Node* node, int value) const {
-        while (node != NIL) {
-            if (value == node->value)
-                return node;
-            else if (value < node->value)
-                node = node->left;
-            else
-                node = node->right;
+    // ── getters versionados (busca binaria) ───────────────────
+
+    template<typename T>
+    T lastLE(const std::vector<std::pair<int,T>>& mods, int v, T def) const {
+        int lo = 0, hi = (int)mods.size() - 1, idx = -1;
+        while (lo <= hi) {
+            int mid = (lo + hi) / 2;
+            if (mods[mid].first <= v) { idx = mid; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        return idx >= 0 ? mods[idx].second : def;
+    }
+
+    Node* getLeft  (Node* n, int v) const {
+        if (n == NIL) return NIL;
+        return lastLE(n->leftMods, v, n->origLeft);
+    }
+    Node* getRight (Node* n, int v) const {
+        if (n == NIL) return NIL;
+        return lastLE(n->rightMods, v, n->origRight);
+    }
+    Node* getParent(Node* n, int v) const {
+        if (n == NIL) return NIL;
+        return lastLE(n->parentMods, v, n->origParent);
+    }
+    Color getColor (Node* n, int v) const {
+        if (n == NIL) return BLACK;
+        return lastLE(n->colorMods, v, n->origColor);
+    }
+
+    // ── setters versionados (com overflow → copia) ────────────
+
+    int totalMods(Node* n) const {
+        return (int)(n->leftMods.size() + n->rightMods.size() +
+                     n->parentMods.size() + n->colorMods.size());
+    }
+
+    Node* handleOverflow(Node* old, int v) {
+        Node* n       = new Node();
+        n->key        = old->key;
+        n->origLeft   = getLeft(old,   v);
+        n->origRight  = getRight(old,  v);
+        n->origParent = getParent(old, v);
+        n->origColor  = getColor(old,  v);
+        allNodes.push_back(n);
+
+        Node* par = n->origParent;
+        if      (par == NIL)                  roots[v] = n;
+        else if (getLeft(par, v) == old)       setLeft(par,  n, v);
+        else                                    setRight(par, n, v);
+
+        if (n->origLeft  != NIL) setParent(n->origLeft,  n, v);
+        if (n->origRight != NIL) setParent(n->origRight, n, v);
+        return n;
+    }
+
+    Node* setLeft  (Node* n, Node* val, int v) {
+        if (n == NIL) return NIL;
+        n->leftMods.push_back({v, val});
+        return (totalMods(n) > D) ? handleOverflow(n, v) : n;
+    }
+    Node* setRight (Node* n, Node* val, int v) {
+        if (n == NIL) return NIL;
+        n->rightMods.push_back({v, val});
+        return (totalMods(n) > D) ? handleOverflow(n, v) : n;
+    }
+    Node* setParent(Node* n, Node* val, int v) {
+        if (n == NIL) return NIL;
+        n->parentMods.push_back({v, val});
+        return (totalMods(n) > D) ? handleOverflow(n, v) : n;
+    }
+    Node* setColor (Node* n, Color val, int v) {
+        if (n == NIL) return NIL;
+        n->colorMods.push_back({v, val});
+        return (totalMods(n) > D) ? handleOverflow(n, v) : n;
+    }
+
+    // ── rotacoes ──────────────────────────────────────────────
+
+    void rotateLeft(Node* x, int v) {
+        Node* y    = getRight(x, v);
+        Node* yL   = getLeft(y, v);
+        Node* xPar = getParent(x, v);
+
+        setRight(x, yL, v);
+        if (yL != NIL) setParent(yL, x, v);
+
+        setParent(y, xPar, v);
+        if      (xPar == NIL)            roots[v] = y;
+        else if (x == getLeft(xPar, v))  setLeft(xPar,  y, v);
+        else                              setRight(xPar, y, v);
+
+        setLeft(y, x, v);
+        setParent(x, y, v);
+    }
+
+    void rotateRight(Node* x, int v) {
+        Node* y    = getLeft(x, v);
+        Node* yR   = getRight(y, v);
+        Node* xPar = getParent(x, v);
+
+        setLeft(x, yR, v);
+        if (yR != NIL) setParent(yR, x, v);
+
+        setParent(y, xPar, v);
+        if      (xPar == NIL)             roots[v] = y;
+        else if (x == getRight(xPar, v))  setRight(xPar, y, v);
+        else                               setLeft(xPar,  y, v);
+
+        setRight(y, x, v);
+        setParent(x, y, v);
+    }
+
+    // ── insertFixUp ───────────────────────────────────────────
+
+    void insertFixUp(Node* z, int v) {
+        while (getColor(getParent(z, v), v) == RED) {
+            Node* par  = getParent(z, v);
+            Node* gpar = getParent(par, v);
+
+            if (par == getLeft(gpar, v)) {
+                Node* uncle = getRight(gpar, v);
+                if (getColor(uncle, v) == RED) {
+                    // caso 1
+                    setColor(par,   BLACK, v);
+                    setColor(uncle, BLACK, v);
+                    setColor(gpar,  RED,   v);
+                    z = gpar;
+                } else {
+                    if (z == getRight(par, v)) {
+                        // caso 2 → transforma em caso 3
+                        z = par;
+                        rotateLeft(z, v);
+                        par  = getParent(z, v);
+                        gpar = getParent(par, v);
+                    }
+                    // caso 3
+                    setColor(par,  BLACK, v);
+                    setColor(gpar, RED,   v);
+                    rotateRight(gpar, v);
+                }
+            } else {
+                Node* uncle = getLeft(gpar, v);
+                if (getColor(uncle, v) == RED) {
+                    setColor(par,   BLACK, v);
+                    setColor(uncle, BLACK, v);
+                    setColor(gpar,  RED,   v);
+                    z = gpar;
+                } else {
+                    if (z == getLeft(par, v)) {
+                        z = par;
+                        rotateRight(z, v);
+                        par  = getParent(z, v);
+                        gpar = getParent(par, v);
+                    }
+                    setColor(par,  BLACK, v);
+                    setColor(gpar, RED,   v);
+                    rotateLeft(gpar, v);
+                }
+            }
+        }
+        setColor(roots[v], BLACK, v);
+    }
+
+    // ── transplant versionado ─────────────────────────────────
+
+    void transplant(Node* u, Node* rep, int v) {
+        Node* uPar = getParent(u, v);
+        if      (uPar == NIL)             roots[v] = rep;
+        else if (u == getLeft(uPar, v))   setLeft(uPar,  rep, v);
+        else                               setRight(uPar, rep, v);
+        setParent(rep, uPar, v);
+    }
+
+    // ── deleteFixUp ───────────────────────────────────────────
+
+    void deleteFixUp(Node* x, Node* xpar, int v) {
+        while (x != roots[v] && getColor(x, v) == BLACK) {
+            Node* par = (x != NIL) ? getParent(x, v) : xpar;
+            if (par == NIL) break;
+
+            if (x == getLeft(par, v)) {
+                Node* w = getRight(par, v);
+                if (getColor(w, v) == RED) {
+                    // caso 1
+                    setColor(w,   BLACK, v);
+                    setColor(par, RED,   v);
+                    rotateLeft(par, v);
+                    xpar = par;
+                    par  = (x != NIL) ? getParent(x, v) : xpar;
+                    w    = getRight(par, v);
+                }
+                if (getColor(getLeft(w,  v), v) == BLACK &&
+                    getColor(getRight(w, v), v) == BLACK) {
+                    // caso 2
+                    setColor(w, RED, v);
+                    x    = par;
+                    xpar = getParent(x, v);
+                } else {
+                    if (getColor(getRight(w, v), v) == BLACK) {
+                        // caso 3
+                        setColor(getLeft(w, v), BLACK, v);
+                        setColor(w, RED, v);
+                        rotateRight(w, v);
+                        par = (x != NIL) ? getParent(x, v) : xpar;
+                        w   = getRight(par, v);
+                    }
+                    // caso 4
+                    setColor(w, getColor(par, v), v);
+                    setColor(par, BLACK, v);
+                    setColor(getRight(w, v), BLACK, v);
+                    rotateLeft(par, v);
+                    x = roots[v];
+                }
+            } else {
+                Node* w = getLeft(par, v);
+                if (getColor(w, v) == RED) {
+                    setColor(w,   BLACK, v);
+                    setColor(par, RED,   v);
+                    rotateRight(par, v);
+                    xpar = par;
+                    par  = (x != NIL) ? getParent(x, v) : xpar;
+                    w    = getLeft(par, v);
+                }
+                if (getColor(getRight(w, v), v) == BLACK &&
+                    getColor(getLeft(w,  v), v) == BLACK) {
+                    setColor(w, RED, v);
+                    x    = par;
+                    xpar = getParent(x, v);
+                } else {
+                    if (getColor(getLeft(w, v), v) == BLACK) {
+                        setColor(getRight(w, v), BLACK, v);
+                        setColor(w, RED, v);
+                        rotateLeft(w, v);
+                        par = (x != NIL) ? getParent(x, v) : xpar;
+                        w   = getLeft(par, v);
+                    }
+                    setColor(w, getColor(par, v), v);
+                    setColor(par, BLACK, v);
+                    setColor(getLeft(w, v), BLACK, v);
+                    rotateRight(par, v);
+                    x = roots[v];
+                }
+            }
+        }
+        setColor(x, BLACK, v);
+    }
+
+    // ── utilidades ────────────────────────────────────────────
+
+    Node* makeNode(int key) {
+        Node* n       = new Node();
+        n->key        = key;
+        n->origLeft   = NIL;
+        n->origRight  = NIL;
+        n->origParent = NIL;
+        n->origColor  = RED;
+        allNodes.push_back(n);
+        return n;
+    }
+
+    Node* searchVer(Node* r, int value, int v) const {
+        while (r != NIL) {
+            if      (value == r->key) return r;
+            else if (value <  r->key) r = getLeft(r, v);
+            else                       r = getRight(r, v);
         }
         return NIL;
     }
 
-    Node* minimum(Node* x) const {
-        while (x->left != NIL)
-            x = x->left;
+    Node* minVer(Node* x, int v) const {
+        while (getLeft(x, v) != NIL) x = getLeft(x, v);
         return x;
     }
 
-    void transplant(Node* u, Node* v) {
-        if (u->parent == NIL)
-            root = v;
-        else if (u == u->parent->left)
-            u->parent->left = v;
-        else
-            u->parent->right = v;
-        v->parent = u->parent;
+    int clamp(int v) const {
+        if (v < 0) return 0;
+        return (v > curVer) ? curVer : v;
     }
 
-    void rotateLeft(Node* x) {
-        Node* y = x->right;
-        x->right = y->left;
-
-        if (y->left != NIL)
-            y->left->parent = x;
-
-        y->parent = x->parent;
-
-        if (x->parent == NIL)
-            root = y;
-        else if (x == x->parent->left)
-            x->parent->left = y;
-        else
-            x->parent->right = y;
-
-        y->left   = x;
-        x->parent = y;
+    void inorder(Node* n, int depth, int v, std::ostringstream& buf) const {
+        if (n == NIL) return;
+        inorder(getLeft(n, v), depth + 1, v, buf);
+        buf << n->key << "," << depth << "," << (getColor(n, v) == RED ? "R" : "N") << " ";
+        inorder(getRight(n, v), depth + 1, v, buf);
     }
 
-    void rotateRight(Node* x) {
-        Node* y = x->left;
-        x->left = y->right;
-
-        if (y->right != NIL)
-            y->right->parent = x;
-
-        y->parent = x->parent;
-
-        if (x->parent == NIL)
-            root = y;
-        else if (x == x->parent->right)
-            x->parent->right = y;
-        else
-            x->parent->left = y;
-
-        y->right  = x;
-        x->parent = y;
-    }
-
-    void insertFixUp(Node* z) {
-        while (z->parent->color == RED) {
-            if (z->parent == z->parent->parent->left) {
-                Node* y = z->parent->parent->right; // tio
-                if (y->color == RED) {
-                    // Caso 1: tio vermelho
-                    z->parent->color          = BLACK;
-                    y->color                  = BLACK;
-                    z->parent->parent->color  = RED;
-                    z = z->parent->parent;
-                } else {
-                    if (z == z->parent->right) {
-                        // Caso 2: tio preto, z filho direito
-                        z = z->parent;
-                        rotateLeft(z);
-                    }
-                    // Caso 3: tio preto, z filho esquerdo
-                    z->parent->color         = BLACK;
-                    z->parent->parent->color = RED;
-                    rotateRight(z->parent->parent);
-                }
-            } else {
-                // Simetrico
-                Node* y = z->parent->parent->left; // tio
-                if (y->color == RED) {
-                    // Caso 1
-                    z->parent->color          = BLACK;
-                    y->color                  = BLACK;
-                    z->parent->parent->color  = RED;
-                    z = z->parent->parent;
-                } else {
-                    if (z == z->parent->left) {
-                        // Caso 2
-                        z = z->parent;
-                        rotateRight(z);
-                    }
-                    // Caso 3
-                    z->parent->color         = BLACK;
-                    z->parent->parent->color = RED;
-                    rotateLeft(z->parent->parent);
-                }
-            }
+    void succHelper(Node* n, int x, int v, int& best) const {
+        if (n == NIL) return;
+        if (n->key > x) {
+            if (n->key < best) best = n->key;
+            succHelper(getLeft(n, v), x, v, best);
+        } else {
+            succHelper(getRight(n, v), x, v, best);
         }
-        root->color = BLACK;
     }
 
-    void deleteFixUp(Node* x) {
-        while (x != root && x->color == BLACK) {
-            if (x == x->parent->left) {
-                Node* w = x->parent->right; // irmao
-                if (w->color == RED) {
-                    // Caso 1: irmao vermelho
-                    w->color          = BLACK;
-                    x->parent->color  = RED;
-                    rotateLeft(x->parent);
-                    w = x->parent->right;
-                }
-                if (w->left->color == BLACK && w->right->color == BLACK) {
-                    // Caso 2: irmao preto, ambos filhos pretos
-                    w->color = RED;
-                    x = x->parent;
-                } else {
-                    if (w->right->color == BLACK) {
-                        // Caso 3: irmao preto, filho direito preto
-                        w->left->color = BLACK;
-                        w->color       = RED;
-                        rotateRight(w);
-                        w = x->parent->right;
-                    }
-                    // Caso 4: irmao preto, filho direito vermelho
-                    w->color          = x->parent->color;
-                    x->parent->color  = BLACK;
-                    w->right->color   = BLACK;
-                    rotateLeft(x->parent);
-                    x = root;
-                }
-            } else {
-                // Simetrico
-                Node* w = x->parent->left; // irmao
-                if (w->color == RED) {
-                    // Caso 1
-                    w->color          = BLACK;
-                    x->parent->color  = RED;
-                    rotateRight(x->parent);
-                    w = x->parent->left;
-                }
-                if (w->right->color == BLACK && w->left->color == BLACK) {
-                    // Caso 2
-                    w->color = RED;
-                    x = x->parent;
-                } else {
-                    if (w->left->color == BLACK) {
-                        // Caso 3
-                        w->right->color = BLACK;
-                        w->color        = RED;
-                        rotateLeft(w);
-                        w = x->parent->left;
-                    }
-                    // Caso 4
-                    w->color          = x->parent->color;
-                    x->parent->color  = BLACK;
-                    w->left->color    = BLACK;
-                    rotateRight(x->parent);
-                    x = root;
-                }
-            }
-        }
-        x->color = BLACK;
-    }
-
-    void inOrderHelper(Node* node, int depth, std::ostringstream& buf) const {
-        if (node == NIL)
-            return;
-        inOrderHelper(node->left, depth + 1, buf);
-        buf << node->value << "," << depth << "," << (node->color == RED ? "R" : "N") << " ";
-        inOrderHelper(node->right, depth + 1, buf);
-    }
-
-    void destroyTree(Node* node) {
-        if (node == NIL)
-            return;
-        destroyTree(node->left);
-        destroyTree(node->right);
-        delete node;
+    void emit(const std::string& s, std::ostream& fileOut) const {
+        fileOut   << s << "\n";
+        std::cout << s << "\n";
     }
 };
 
@@ -314,31 +449,30 @@ int main() {
         return 1;
     }
 
-    RBTree tree;
+    PersistentRBTree tree;
     std::string line;
 
     while (std::getline(inFile, line)) {
-        if (line.empty())
-            continue;
-
+        if (line.empty()) continue;
         std::istringstream ss(line);
         std::string cmd;
         ss >> cmd;
 
         if (cmd == "INC") {
-            int val;
-            ss >> val;
+            int val; ss >> val;
             tree.insert(val);
         } else if (cmd == "REM") {
-            int val;
-            ss >> val;
+            int val; ss >> val;
             tree.remove(val);
         } else if (cmd == "IMP") {
-            tree.printInOrder(outFile);
+            int ver;
+            if (ss >> ver) tree.printVersion(ver, outFile);
+            else           tree.printVersion(tree.currentVersion(), outFile);
+        } else if (cmd == "SUC") {
+            int val, ver; ss >> val >> ver;
+            tree.successor(val, ver, outFile);
         }
     }
 
-    inFile.close();
-    outFile.close();
     return 0;
 }
