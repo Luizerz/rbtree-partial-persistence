@@ -4,11 +4,18 @@ Implementação em C++ de uma Árvore Rubro-Negra (RBT) com **persistência parc
 
 ---
 
+## Autores
+
+- Luiz Matheus Sena Macedo
+- Leticia Sampaio
+
+---
+
 ## Requisitos
 
 ### Linux (Ubuntu)
 - Ubuntu 20.04 ou superior
-- GCC 7 ou superior
+- GCC 7 ou superior (`g++`) com suporte a C++17
 - Make
 
 ```bash
@@ -23,17 +30,15 @@ sudo apt update && sudo apt install g++ make
 pacman -S mingw-w64-ucrt-x86_64-gcc make
 ```
 
-- **Opção C — Visual Studio 2019+**: abra `main.cpp` diretamente (suporte a C++17 nativo; não requer `make`).
-
 ---
 
 ## Compilação
 
 ```bash
-make
+make build
 ```
 
-Para limpar os artefatos:
+Para limpar os artefatos de compilação:
 
 ```bash
 make clean
@@ -43,20 +48,50 @@ make clean
 
 ## Modo de uso
 
-O programa lê operações de `entrada.txt`, imprime resultados no terminal e grava tudo em `saida.txt`.
+O programa recebe um arquivo de entrada `.txt` como argumento, imprime os resultados no terminal e grava tudo em `saida.txt`.
 
 ```bash
-./rbn-tree
-```
-
-No Windows (MinGW):
-```bash
-rbn-tree.exe
+make run                              # usa entrada.txt por padrão
+make run INPUT=outro_arquivo.txt      # arquivo de entrada personalizado
 ```
 
 ---
 
-## Formato do arquivo de entrada (`entrada.txt`)
+## Testes
+
+O projeto inclui 30 casos de teste automatizados em `tests/`. Para executar todos:
+
+```bash
+make test
+```
+
+O resultado é impresso no terminal (`PASSED` / `FAILED`) para cada teste, seguido do total:
+
+```
+Running 30 tests...
+  Test 01: PASSED
+  Test 02: PASSED
+  ...
+Results: 30 passed, 0 failed
+```
+
+Cada teste é composto por um par de arquivos:
+
+| Arquivo | Descrição |
+|---|---|
+| `tests/entradaXX.txt` | Arquivo de entrada com as operações |
+| `tests/saida_esperadaXX.txt` | Saída esperada para aquela entrada |
+
+Para testar um caso manualmente e inspecionar diferenças:
+
+```bash
+make run INPUT=tests/entrada05.txt
+diff saida.txt tests/saida_esperada05.txt > diferencas.txt
+```
+
+---
+
+## Formato do arquivo de entrada
 
 Cada linha contém uma operação. Linhas em branco são ignoradas.
 
@@ -145,6 +180,37 @@ Note que `IMP 5` após a remoção ainda mostra o nó `13` — a versão 5 é pr
 - Cada `INC` ou `REM` incrementa a versão em 1.
 - Máximo de **100 versões** (versões 0 a 99).
 - `IMP` e `SUC` não criam novas versões.
+
+---
+
+## Descrição das funções e estruturas
+
+### Estruturas
+
+| Estrutura | Arquivo | Descrição |
+|---|---|---|
+| `Color` | `src/core/Node.hpp` | Enumeração `RED` / `BLACK` |
+| `Node` | `src/core/Node.hpp` | Nó da árvore com listas de modificações por versão (Fat Node) |
+| `ITreeCommands` | `src/core/PersistentRBTree.hpp` | Interface pura com as operações públicas da árvore |
+| `Command` | `src/io/Command.hpp` | Resultado do parsing de uma linha de entrada |
+| `CommandType` | `src/io/Command.hpp` | Enumeração `INC`, `REM`, `IMP`, `SUC`, `UNKNOWN` |
+
+### Classes principais
+
+| Classe | Arquivo | Descrição |
+|---|---|---|
+| `FatNodeStore` | `src/core/FatNodeStore.hpp/.cpp` | Gerencia a memória dos nós e implementa os acessores versionados de cada campo (`getLeft`, `getRight`, `getParent`, `getColor`) via busca binária, e os setores com lógica de overflow |
+| `RBTreeEngine` | `src/core/RBTreeEngine.hpp/.cpp` | Contém toda a lógica do algoritmo Rubro-Negro: `rotateLeft`, `rotateRight`, `insertFixUp`, `deleteFixUp`, `transplant`, `searchVer`, `minVer` |
+| `PersistentRBTree` | `src/core/PersistentRBTree.hpp/.cpp` | Implementa `ITreeCommands`; gerencia o array de raízes por versão e orquestra `insert`, `remove`, `printVersion` e `successor` |
+| `CommandParser` | `src/io/CommandParser.hpp/.cpp` | Converte uma linha de texto em um `Command` |
+
+### Funções livres / namespaces
+
+| Função | Arquivo | Descrição |
+|---|---|---|
+| `TreeQuery::inorder` | `src/query/TreeFormatter.hpp/.cpp` | Percurso em ordem com profundidade e cor para o comando `IMP` |
+| `TreeQuery::successor` | `src/query/SuccessorFinder.hpp/.cpp` | Busca do sucessor estrito em uma versão para o comando `SUC` |
+| `emit` | `src/io/OutputWriter.hpp` | Escreve uma linha simultaneamente no arquivo `saida.txt` e no terminal |
 
 ---
 
