@@ -55,7 +55,9 @@ void FatNodeStore::removeBackPtr(Node* from, Node* n) {
     bp.erase(std::remove(bp.begin(), bp.end(), n), bp.end());
 }
 
-Node* FatNodeStore::handleOverflow(Node* old, int v, Node* roots[]) {
+Node* FatNodeStore::handleOverflow(Node* old, int v, Node* roots[], Field skipField) {
+    bool wasRoot = (roots[v] == old);
+
     Node* n       = new Node();
     n->key        = old->key;
     n->origLeft   = getLeft(old,   v);
@@ -65,9 +67,11 @@ Node* FatNodeStore::handleOverflow(Node* old, int v, Node* roots[]) {
     allNodes_.push_back(n);
 
     // Passo 1: substituir old por n' nos backPointers de quem old apontava.
-    if (n->origLeft   != NIL) { removeBackPtr(n->origLeft,   old); n->origLeft->backPointers.push_back(n); }
-    if (n->origRight  != NIL) { removeBackPtr(n->origRight,  old); n->origRight->backPointers.push_back(n); }
-    if (n->origParent != NIL) { removeBackPtr(n->origParent, old); n->origParent->backPointers.push_back(n); }
+    // skipField indica qual campo o setter vai sobrescrever logo após — seu backPointer
+    // é configurado pelo próprio setter, então pulamos aqui para evitar conflito.
+    if (n->origLeft   != NIL && skipField != Field::LEFT)   { removeBackPtr(n->origLeft,   old); n->origLeft->backPointers.push_back(n); }
+    if (n->origRight  != NIL && skipField != Field::RIGHT)  { removeBackPtr(n->origRight,  old); n->origRight->backPointers.push_back(n); }
+    if (n->origParent != NIL && skipField != Field::PARENT) { removeBackPtr(n->origParent, old); n->origParent->backPointers.push_back(n); }
 
     // Passo 2: redirecionar para n' todos os nós que apontavam para old.
     std::vector<Node*> bpCopy = old->backPointers;
@@ -77,7 +81,7 @@ Node* FatNodeStore::handleOverflow(Node* old, int v, Node* roots[]) {
         else if (getParent(m, v) == old) setParent(m, n, v, roots);
     }
 
-    if (n->origParent == NIL) roots[v] = n;
+    if (wasRoot) roots[v] = n;
     return n;
 }
 
@@ -85,31 +89,35 @@ Node* FatNodeStore::setLeft(Node* n, Node* val, int v, Node* roots[]) {
     if (n == NIL) return NIL;
     Node* oldVal = lastLE<Node*>(n->mods, v, Field::LEFT, n->origLeft);
     if (oldVal != NIL) removeBackPtr(oldVal, n);
+    if (totalMods(n) == D) n = handleOverflow(n, v, roots, Field::LEFT);
     if (val    != NIL) val->backPointers.push_back(n);
     n->mods.push_back({v, Field::LEFT, val});
-    return (totalMods(n) > D) ? handleOverflow(n, v, roots) : n;
+    return n;
 }
 
 Node* FatNodeStore::setRight(Node* n, Node* val, int v, Node* roots[]) {
     if (n == NIL) return NIL;
     Node* oldVal = lastLE<Node*>(n->mods, v, Field::RIGHT, n->origRight);
     if (oldVal != NIL) removeBackPtr(oldVal, n);
+    if (totalMods(n) == D) n = handleOverflow(n, v, roots, Field::RIGHT);
     if (val    != NIL) val->backPointers.push_back(n);
     n->mods.push_back({v, Field::RIGHT, val});
-    return (totalMods(n) > D) ? handleOverflow(n, v, roots) : n;
+    return n;
 }
 
 Node* FatNodeStore::setParent(Node* n, Node* val, int v, Node* roots[]) {
     if (n == NIL) return NIL;
     Node* oldVal = lastLE<Node*>(n->mods, v, Field::PARENT, n->origParent);
     if (oldVal != NIL) removeBackPtr(oldVal, n);
+    if (totalMods(n) == D) n = handleOverflow(n, v, roots, Field::PARENT);
     if (val    != NIL) val->backPointers.push_back(n);
     n->mods.push_back({v, Field::PARENT, val});
-    return (totalMods(n) > D) ? handleOverflow(n, v, roots) : n;
+    return n;
 }
 
 Node* FatNodeStore::setColor(Node* n, Color val, int v, Node* roots[]) {
     if (n == NIL) return NIL;
+    if (totalMods(n) == D) n = handleOverflow(n, v, roots, Field::COLOR);
     n->mods.push_back({v, Field::COLOR, val});
-    return (totalMods(n) > D) ? handleOverflow(n, v, roots) : n;
+    return n;
 }

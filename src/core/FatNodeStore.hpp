@@ -34,5 +34,5 @@ private:
 
     void  removeBackPtr(Node* from, Node* n);
     int   totalMods(Node* n) const;
-    Node* handleOverflow(Node* old, int v, Node* roots[]);
+    Node* handleOverflow(Node* old, int v, Node* roots[], Field skipField);
 };

@@ -201,7 +201,7 @@ Note que `IMP 5` após a remoção ainda mostra o nó `13` — a versão 5 é pr
 
 | Classe | Arquivo | Descrição |
 |---|---|---|
-| `FatNodeStore` | `src/core/FatNodeStore.hpp/.cpp` | Gerencia a memória dos nós e implementa os acessores versionados (`getLeft`, `getRight`, `getParent`, `getColor`) via busca binária + varredura por campo, os setters com manutenção de `backPointers` e a lógica de overflow (`handleOverflow`) |
+| `FatNodeStore` | `src/core/FatNodeStore.hpp/.cpp` | Gerencia a memória dos nós e implementa os acessores versionados (`getLeft`, `getRight`, `getParent`, `getColor`) via varredura linear reversa, os setters com manutenção de `backPointers` e a lógica de overflow (`handleOverflow`) |
 | `RBTreeEngine` | `src/core/RBTreeEngine.hpp/.cpp` | Contém toda a lógica do algoritmo Rubro-Negro: `rotateLeft`, `rotateRight`, `insertFixUp`, `deleteFixUp`, `transplant`, `searchVer`, `minVer` |
 | `PersistentRBTree` | `src/core/PersistentRBTree.hpp/.cpp` | Implementa `ITreeCommands`; gerencia o array de raízes por versão e orquestra `insert`, `remove`, `printVersion` e `successor` |
 | `CommandParser` | `src/io/CommandParser.hpp/.cpp` | Converte uma linha de texto em um `Command` |
@@ -241,22 +241,23 @@ Cada nó armazena:
 
 Complexidade: **O(m)** — equivalente a **O(1)** dado que `m ≤ D = 6`. A busca linear é preferível à binária nesse tamanho de vetor: código mais simples, cache-friendly e sem overhead de dois passes.
 
-### Escrita versionada — `setLeft(n, val, v)`, `setRight(n, val, v)`, `setParent(n, val, v)`, `setColor(n, val, v)` 
+### Escrita versionada — `setLeft(n, val, v)`, `setRight(n, val, v)`, `setParent(n, val, v)`, `setColor(n, val, v)`
 
-1. Recupera o valor anterior do campo para atualizar os `backPointers`.
-2. Remove `n` dos `backPointers` do nó antigo; adiciona `n` aos `backPointers` do novo nó.
-3. Appenda `{v, Field::X, val}` à lista `mods`.
-4. Se `mods.size() > D`: aciona `handleOverflow`.
+1. Recupera o valor anterior do campo (`oldVal`) e remove `n` dos `backPointers` de `oldVal`.
+2. Se `mods.size() == D`: aciona `handleOverflow` antes de inserir o novo mod — o vetor nunca ultrapassa `D` entradas.
+3. Adiciona `n` aos `backPointers` do novo valor (apenas para campos ponteiro).
+4. Appenda `{v, Field::X, val}` à lista `mods`.
 
-### Overflow — `handleOverflow(old, v)` 
+### Overflow — `handleOverflow(old, v, skipField)`
 
-Acionado quando um nó acumula mais de `D = 6` modificações:
+Acionado quando um nó já possui exatamente `D = 6` modificações e está prestes a receber mais uma:
 
-1. **Cria cópia** `n'` com `mods = []` e `orig*` = estado atual de `old` (via getters).
-2. **Passo 1 — herança de relacionamentos**: para cada nó que `old` apontava via `origLeft`, `origRight`, `origParent`, substitui `old` por `n'` nos `backPointers` desse nó.
-3. **Passo 2 — redirecionamento**: itera sobre uma cópia de `old.backPointers` e, para cada nó `m` que apontava para `old`, atualiza o campo correspondente via setter (o que pode propagar recursivamente caso `m` também estoure).
-4. Atualiza `roots[v] = n'` se `old` era a raiz.
-5. `old` é preservado em memória para consultas a versões passadas.
+1. Registra `wasRoot = (roots[v] == old)`.
+2. **Cria cópia** `n'` com `mods = []` e `orig*` = estado atual de `old` (via getters).
+3. **Passo 1 — herança de relacionamentos**: para cada campo ponteiro (`origLeft`, `origRight`, `origParent`), exceto `skipField`, substitui `old` por `n'` nos `backPointers` do nó apontado. O campo `skipField` é pulado porque o setter que acionou o overflow cuida do seu próprio `backPointer`.
+4. **Passo 2 — redirecionamento**: itera sobre uma cópia de `old.backPointers` e, para cada nó `m` que apontava para `old`, atualiza o campo correspondente via setter (o que pode propagar recursivamente caso `m` também estoure).
+5. Atualiza `roots[v] = n'` se `wasRoot` for verdadeiro. Usa `roots[v] == old` em vez de `origParent == NIL` porque o mod do campo pai ainda não foi inserido quando o overflow é acionado.
+6. `old` é preservado em memória para consultas a versões passadas.
 
 ---
 
