@@ -190,7 +190,9 @@ Note que `IMP 5` após a remoção ainda mostra o nó `13` — a versão 5 é pr
 | Estrutura | Arquivo | Descrição |
 |---|---|---|
 | `Color` | `src/core/Node.hpp` | Enumeração `RED` / `BLACK` |
-| `Node` | `src/core/Node.hpp` | Nó da árvore com listas de modificações por versão (Fat Node) |
+| `Field` | `src/core/Node.hpp` | Enumeração dos campos modificáveis: `LEFT`, `RIGHT`, `PARENT`, `COLOR` |
+| `Mod` | `src/core/Node.hpp` | Entrada do histórico de modificações: `{version, field, value}` — `value` é `Node*` para ponteiros ou `Color` para a cor |
+| `Node` | `src/core/Node.hpp` | Nó Fat Node com valores originais (`origLeft`, `origRight`, `origParent`, `origColor`), lista unificada de modificações (`mods`) e ponteiros de retorno (`backPointers`) |
 | `ITreeCommands` | `src/core/PersistentRBTree.hpp` | Interface pura com as operações públicas da árvore |
 | `Command` | `src/io/Command.hpp` | Resultado do parsing de uma linha de entrada |
 | `CommandType` | `src/io/Command.hpp` | Enumeração `INC`, `REM`, `IMP`, `SUC`, `UNKNOWN` |
@@ -199,7 +201,7 @@ Note que `IMP 5` após a remoção ainda mostra o nó `13` — a versão 5 é pr
 
 | Classe | Arquivo | Descrição |
 |---|---|---|
-| `FatNodeStore` | `src/core/FatNodeStore.hpp/.cpp` | Gerencia a memória dos nós e implementa os acessores versionados de cada campo (`getLeft`, `getRight`, `getParent`, `getColor`) via busca binária, e os setores com lógica de overflow |
+| `FatNodeStore` | `src/core/FatNodeStore.hpp/.cpp` | Gerencia a memória dos nós e implementa os acessores versionados (`getLeft`, `getRight`, `getParent`, `getColor`) via busca binária + varredura por campo, os setters com manutenção de `backPointers` e a lógica de overflow (`handleOverflow`) |
 | `RBTreeEngine` | `src/core/RBTreeEngine.hpp/.cpp` | Contém toda a lógica do algoritmo Rubro-Negro: `rotateLeft`, `rotateRight`, `insertFixUp`, `deleteFixUp`, `transplant`, `searchVer`, `minVer` |
 | `PersistentRBTree` | `src/core/PersistentRBTree.hpp/.cpp` | Implementa `ITreeCommands`; gerencia o array de raízes por versão e orquestra `insert`, `remove`, `printVersion` e `successor` |
 | `CommandParser` | `src/io/CommandParser.hpp/.cpp` | Converte uma linha de texto em um `Command` |
@@ -211,6 +213,51 @@ Note que `IMP 5` após a remoção ainda mostra o nó `13` — a versão 5 é pr
 | `TreeQuery::inorder` | `src/query/TreeFormatter.hpp/.cpp` | Percurso em ordem com profundidade e cor para o comando `IMP` |
 | `TreeQuery::successor` | `src/query/SuccessorFinder.hpp/.cpp` | Busca do sucessor estrito em uma versão para o comando `SUC` |
 | `emit` | `src/io/OutputWriter.hpp` | Escreve uma linha simultaneamente no arquivo `saida.txt` e no terminal |
+
+---
+
+## Implementação Fat Node
+
+A persistência parcial segue fielmente o método de Driscoll et al. (1989):
+
+### Constantes
+
+| Constante | Valor | Significado |
+|---|---|---|
+| `D` | `6` | Limite de modificações por nó — `2 × p`, onde `p = 3` ponteiros (`left`, `right`, `parent`) |
+| `MAX_VERSIONS` | `100` | Número máximo de versões suportadas |
+
+### Estrutura do nó
+
+Cada nó armazena:
+- **Valores originais** (`origLeft`, `origRight`, `origParent`, `origColor`) — estado no momento da criação.
+- **Lista unificada de mods** (`std::vector<Mod> mods`) — lista ordenada por versão crescente com entradas `{version, Field, value}`, onde `value` é `std::variant<Node*, Color>`.
+- **Ponteiros de retorno** (`std::vector<Node*> backPointers`) — **não versionados** — contém todos os nós `m` que possuem algum campo apontando para este nó na versão mais recente.
+
+### Leitura versionada — `getLeft(n, v)` etc.
+
+1. Busca binária em `mods` para encontrar o último índice com `version ≤ v`.
+2. Varredura reversa a partir desse índice para localizar o campo desejado (`Field::LEFT`, etc.).
+3. Se nenhuma modificação for encontrada, retorna o valor original (`orig*`).
+
+Complexidade: **O(log m + p)**, onde `m` = número de mods e `p` = número de campos.
+
+### Escrita versionada — `setLeft(n, val, v)` etc. (Caso A)
+
+1. Recupera o valor anterior do campo para atualizar os `backPointers`.
+2. Remove `n` dos `backPointers` do nó antigo; adiciona `n` aos `backPointers` do novo nó.
+3. Appenda `{v, Field::X, val}` à lista `mods`.
+4. Se `mods.size() > D`: aciona `handleOverflow`.
+
+### Overflow — `handleOverflow(old, v)` (Caso B)
+
+Acionado quando um nó acumula mais de `D = 6` modificações:
+
+1. **Cria cópia** `n'` com `mods = []` e `orig*` = estado atual de `old` (via getters).
+2. **Passo 1 — herança de relacionamentos**: para cada nó que `old` apontava via `origLeft`, `origRight`, `origParent`, substitui `old` por `n'` nos `backPointers` desse nó.
+3. **Passo 2 — redirecionamento**: itera sobre uma cópia de `old.backPointers` e, para cada nó `m` que apontava para `old`, atualiza o campo correspondente via setter (o que pode propagar recursivamente caso `m` também estoure).
+4. Atualiza `roots[v] = n'` se `old` era a raiz.
+5. `old` é preservado em memória para consultas a versões passadas.
 
 ---
 

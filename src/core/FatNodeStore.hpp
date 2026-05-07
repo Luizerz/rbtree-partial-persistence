@@ -24,17 +24,22 @@ public:
 private:
     std::vector<Node*> allNodes_;
 
+    // Busca binária pelo corte de versão, depois varredura reversa pelo campo f
     template<typename T>
-    T lastLE(const std::vector<std::pair<int, T>>& mods, int v, T def) const {
-        int lo = 0, hi = (int)mods.size() - 1, idx = -1;
+    T lastLE(const std::vector<Mod>& mods, int v, Field f, T def) const {
+        int lo = 0, hi = (int)mods.size() - 1, cut = -1;
         while (lo <= hi) {
             int mid = (lo + hi) / 2;
-            if (mods[mid].first <= v) { idx = mid; lo = mid + 1; }
+            if (mods[mid].version <= v) { cut = mid; lo = mid + 1; }
             else hi = mid - 1;
         }
-        return idx >= 0 ? mods[idx].second : def;
+        for (int i = cut; i >= 0; --i)
+            if (mods[i].field == f)
+                return std::get<T>(mods[i].value);
+        return def;
     }
 
+    void  removeBackPtr(Node* from, Node* n);
     int   totalMods(Node* n) const;
     Node* handleOverflow(Node* old, int v, Node* roots[]);
 };

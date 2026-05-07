@@ -1,11 +1,20 @@
 #pragma once
 #include <vector>
-#include <utility>
+#include <variant>
 
 enum Color { RED, BLACK };
+enum class Field { LEFT, RIGHT, PARENT, COLOR };
 
 static const int MAX_VERSIONS = 100;
 static const int D = 6;    // 2 * p, p = 3 ponteiros (left, right, parent)
+
+struct Node;  // forward declaration necessário: Mod referencia Node*
+
+struct Mod {
+    int   version;
+    Field field;
+    std::variant<Node*, Color> value;  // Node* para LEFT/RIGHT/PARENT, Color para COLOR
+};
 
 struct Node {
     int   key;
@@ -13,8 +22,6 @@ struct Node {
     Node* origRight;
     Node* origParent;
     Color origColor;
-    std::vector<std::pair<int, Node*>>  leftMods;
-    std::vector<std::pair<int, Node*>>  rightMods;
-    std::vector<std::pair<int, Node*>>  parentMods;
-    std::vector<std::pair<int, Color>>  colorMods;
+    std::vector<Mod>   mods;         // lista unificada de modificações, ordenada por versão
+    std::vector<Node*> backPointers; // não versionado — quem aponta para este nó na última versão
 };
