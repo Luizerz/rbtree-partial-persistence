@@ -5,7 +5,7 @@
 enum Color { RED, BLACK };
 
 static const int MAX_VERSIONS = 100;
-static const int D = 1000;
+static const int D = 6;    // 2 * p, p = 3 ponteiros (left, right, parent)
 
 struct Node {
     int   key;
