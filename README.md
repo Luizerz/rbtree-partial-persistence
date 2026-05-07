@@ -6,8 +6,8 @@ Implementação em C++ de uma Árvore Rubro-Negra (RBT) com **persistência parc
 
 ## Autores
 
-- Luiz Matheus Sena Macedo
-- Leticia Sampaio
+- Luiz Matheus Sena Macedo [603273]
+- Leticia Sampaio Araújo Gonçalves [603266]
 
 ---
 
