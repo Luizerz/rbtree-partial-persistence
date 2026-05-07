@@ -241,14 +241,14 @@ Cada nó armazena:
 
 Complexidade: **O(m)** — equivalente a **O(1)** dado que `m ≤ D = 6`. A busca linear é preferível à binária nesse tamanho de vetor: código mais simples, cache-friendly e sem overhead de dois passes.
 
-### Escrita versionada — `setLeft(n, val, v)`, `setRight(n, val, v)`, `setParent(n, val, v)`, `setColor(n, val, v)` (Caso A)
+### Escrita versionada — `setLeft(n, val, v)`, `setRight(n, val, v)`, `setParent(n, val, v)`, `setColor(n, val, v)` 
 
 1. Recupera o valor anterior do campo para atualizar os `backPointers`.
 2. Remove `n` dos `backPointers` do nó antigo; adiciona `n` aos `backPointers` do novo nó.
 3. Appenda `{v, Field::X, val}` à lista `mods`.
 4. Se `mods.size() > D`: aciona `handleOverflow`.
 
-### Overflow — `handleOverflow(old, v)` (Caso B)
+### Overflow — `handleOverflow(old, v)` 
 
 Acionado quando um nó acumula mais de `D = 6` modificações:
 
