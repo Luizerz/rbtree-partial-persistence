@@ -20,11 +20,11 @@ test: build
 	passed=0; failed=0; \
 	for i in $$(seq -f "%02g" 1 30); do \
 		./$(TARGET) tests/entrada$$i.txt > /dev/null; \
-		if diff -q saida.txt tests/saida_esperada$$i.txt > /dev/null 2>&1; then \
+		if diff -q --strip-trailing-cr saida.txt tests/saida_esperada$$i.txt > /dev/null 2>&1; then \
 			echo "  Test $$i: PASSED"; passed=$$((passed+1)); \
 		else \
 			echo "  Test $$i: FAILED"; failed=$$((failed+1)); \
-			diff saida.txt tests/saida_esperada$$i.txt; \
+			diff --strip-trailing-cr saida.txt tests/saida_esperada$$i.txt; \
 		fi; \
 	done; \
 	echo ""; \
