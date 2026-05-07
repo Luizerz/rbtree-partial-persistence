@@ -1,0 +1,3 @@
+SUC 20 1 infinito
+SUC 20 2 30
+SUC 20 3 30

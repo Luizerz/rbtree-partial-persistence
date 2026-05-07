@@ -4,12 +4,17 @@
 #include "core/PersistentRBTree.hpp"
 #include "io/CommandParser.hpp"
 
-int main() {
-    std::ifstream inFile("entrada.txt");
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        std::cerr << "Uso: " << argv[0] << " <arquivo_entrada.txt>\n";
+        return 1;
+    }
+
+    std::ifstream inFile(argv[1]);
     std::ofstream outFile("saida.txt");
 
     if (!inFile.is_open()) {
-        std::cerr << "Erro: nao foi possivel abrir entrada.txt\n";
+        std::cerr << "Erro: nao foi possivel abrir " << argv[1] << "\n";
         return 1;
     }
     if (!outFile.is_open()) {

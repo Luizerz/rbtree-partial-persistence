@@ -1,0 +1,5 @@
+INC 50
+INC 30
+IMP 2
+REM 99
+IMP 3
