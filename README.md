@@ -234,15 +234,14 @@ Cada nó armazena:
 - **Lista unificada de mods** (`std::vector<Mod> mods`) — lista ordenada por versão crescente com entradas `{version, Field, value}`, onde `value` é `std::variant<Node*, Color>`.
 - **Ponteiros de retorno** (`std::vector<Node*> backPointers`) — **não versionados** — contém todos os nós `m` que possuem algum campo apontando para este nó na versão mais recente.
 
-### Leitura versionada — `getLeft(n, v)` etc.
+### Leitura versionada — `getLeft(n, v)`, `getRight(n, v)`, `getParent(n, v)`, `getColor(n, v)`
 
-1. Busca binária em `mods` para encontrar o último índice com `version ≤ v`.
-2. Varredura reversa a partir desse índice para localizar o campo desejado (`Field::LEFT`, etc.).
-3. Se nenhuma modificação for encontrada, retorna o valor original (`orig*`).
+1. Varredura reversa em `mods`: percorre do fim para o início procurando a primeira entrada em que `version ≤ v` **e** `field == f`.
+2. Se nenhuma modificação for encontrada, retorna o valor original (`orig*`).
 
-Complexidade: **O(log m + p)**, onde `m` = número de mods e `p` = número de campos.
+Complexidade: **O(m)** — equivalente a **O(1)** dado que `m ≤ D = 6`. A busca linear é preferível à binária nesse tamanho de vetor: código mais simples, cache-friendly e sem overhead de dois passes.
 
-### Escrita versionada — `setLeft(n, val, v)` etc. (Caso A)
+### Escrita versionada — `setLeft(n, val, v)`, `setRight(n, val, v)`, `setParent(n, val, v)`, `setColor(n, val, v)` (Caso A)
 
 1. Recupera o valor anterior do campo para atualizar os `backPointers`.
 2. Remove `n` dos `backPointers` do nó antigo; adiciona `n` aos `backPointers` do novo nó.

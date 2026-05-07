@@ -24,17 +24,10 @@ public:
 private:
     std::vector<Node*> allNodes_;
 
-    // Busca binária pelo corte de versão, depois varredura reversa pelo campo f
     template<typename T>
     T lastLE(const std::vector<Mod>& mods, int v, Field f, T def) const {
-        int lo = 0, hi = (int)mods.size() - 1, cut = -1;
-        while (lo <= hi) {
-            int mid = (lo + hi) / 2;
-            if (mods[mid].version <= v) { cut = mid; lo = mid + 1; }
-            else hi = mid - 1;
-        }
-        for (int i = cut; i >= 0; --i)
-            if (mods[i].field == f)
+        for (int i = (int)mods.size() - 1; i >= 0; --i)
+            if (mods[i].version <= v && mods[i].field == f)
                 return std::get<T>(mods[i].value);
         return def;
     }

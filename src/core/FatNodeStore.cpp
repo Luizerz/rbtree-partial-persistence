@@ -64,13 +64,12 @@ Node* FatNodeStore::handleOverflow(Node* old, int v, Node* roots[]) {
     n->origColor  = getColor(old,  v);
     allNodes_.push_back(n);
 
-    // Passo 1: n' herda os relacionamentos orig* de old.
-    // Para cada nó que old apontava, substituir old por n' nos backPointers desse nó.
+    // Passo 1: substituir old por n' nos backPointers de quem old apontava.
     if (n->origLeft   != NIL) { removeBackPtr(n->origLeft,   old); n->origLeft->backPointers.push_back(n); }
     if (n->origRight  != NIL) { removeBackPtr(n->origRight,  old); n->origRight->backPointers.push_back(n); }
     if (n->origParent != NIL) { removeBackPtr(n->origParent, old); n->origParent->backPointers.push_back(n); }
 
-    // Passo 2: atualizar os nós que apontam PARA old (via seus campos de ponteiro).
+    // Passo 2: redirecionar para n' todos os nós que apontavam para old.
     std::vector<Node*> bpCopy = old->backPointers;
     for (Node* m : bpCopy) {
         if      (getLeft(m,   v) == old) setLeft(m,   n, v, roots);
